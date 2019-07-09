@@ -1,0 +1,8 @@
+[package]
+name = "rusty-makey"
+version = "0.1.0"
+authors = ["Dave Tucker <dave@dtucker.co.uk>"]
+edition = "2018"
+
+[dependencies]
+nom = "5.0.0"
