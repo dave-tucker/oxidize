@@ -9,6 +9,7 @@ pub enum Assignment {
   Simple,
   Recursive,
   Append,
+  Shell,
 }
 
 // A Variable has a name, assignment type and a value
@@ -32,6 +33,7 @@ fn parse_assignment_op(input: &[u8]) -> IResult<&[u8], Assignment> {
     map!(tag!("="),|_| Assignment::Recursive) |
     map!(tag!("+="),|_| Assignment::Append) |
     map!(tag!("?="),|_| Assignment::Conditional) |
+    map!(tag!("!="),|_| Assignment::Shell) |
     map!(tag!(":="),|_| Assignment::Simple)  |
     map!(tag!("::="),|_| Assignment::Simple))
 }
@@ -68,12 +70,13 @@ fn line_ending(input: &[u8]) -> IResult<&[u8], &[u8]> {
 }
 
 // A variable name may be any sequence of characters not containing ‘:’, ‘#’, ‘=’, or whitespace
-// I am also including ? as it conflicts with the conditional assignment operator
+// I am also including ? and ! as these can conflict with the assignment operator
 fn is_variable_name(c: u8) -> bool {
   match c {
     b':' => false,
     b'#' => false,
     b'=' => false,
+    b'!' => false,
     b'?' => false,
     b' ' => false,
     b'\t' => false,
