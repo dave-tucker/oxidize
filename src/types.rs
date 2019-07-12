@@ -9,11 +9,11 @@ pub enum Assignment {
 }
 
 // A Variable has a name, assignment type and a value
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Variable<'a> {
     pub name: &'a str,
     pub assignment: Assignment,
-    pub value: &'a str,
+    pub value: Vec<&'a str>,
 }
 
 // A Rule contains a list of targets, prerequisites and the recipe to build them
@@ -21,7 +21,7 @@ pub struct Variable<'a> {
 pub struct Rule<'a> {
     pub targets: Vec<&'a str>,
     pub prerequsities: Vec<&'a str>,
-    pub recipe: Vec<String>,
+    pub recipe: Vec<&'a str>,
 }
 
 // Makefile represents the contents of the file

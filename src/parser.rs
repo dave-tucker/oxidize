@@ -1,9 +1,8 @@
 use nom::{
     alt,
     branch::alt,
-    bytes::complete::escaped_transform,
-    bytes::complete::{tag, take_till, take_while, take_while1},
-    character::complete::{line_ending, space0, space1},
+    bytes::complete::{escaped_transform, tag, take_while, take_while1},
+    character::complete::{line_ending, not_line_ending, one_of, space0, space1},
     combinator::{map, opt},
     error::{context, convert_error, make_error, ErrorKind, VerboseError},
     multi::{many0, many1},
@@ -90,28 +89,12 @@ fn parse_variable_name<'a>(i: &'a str) -> IResult<&'a str, &'a str, VerboseError
     take_while(is_variable_name)(i)
 }
 
-macro_rules! test_variable_name {
-    ($name:ident, $i:expr, $o:expr) => {
-        #[test]
-        fn $name() {
-            let res = parse_variable_name($i);
-            match res {
-                Ok((_, o)) => {
-                    assert_eq!(o, $o);
-                }
-                Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => {
-                    println!("{}", convert_error($i, e));
-                    panic!();
-                }
-                Err(nom::Err::Incomplete(_)) => unreachable!(),
-            }
-        }
-    };
+#[test]
+fn test_parse_variable_name() {
+    assert_eq!(parse_variable_name("bar#"), Ok(("#", "bar")));
+    assert_eq!(parse_variable_name("b?ar"), Ok(("?ar", "b")));
+    assert_eq!(parse_variable_name("b? ar"), Ok(("? ar", "b")));
 }
-
-test_variable_name!(test_var_name_1, "bar#", "bar");
-test_variable_name!(test_var_name_2, "b?ar", "b");
-test_variable_name!(test_var_name_3, "b? ar", "b");
 
 // Parse Variable
 fn parse_variable<'a>(i: &'a str) -> IResult<&'a str, Variable, VerboseError<&'a str>> {
@@ -119,28 +102,74 @@ fn parse_variable<'a>(i: &'a str) -> IResult<&'a str, Variable, VerboseError<&'a
     let (i, _) = space0(i)?;
     let (i, bar) = parse_assignment_op(i)?;
     let (i, _) = space0(i)?;
-    let (i, baz) = take_till(|ch| ch == '\r' || ch == '\n')(i)?;
-    let (i, _) = many1(line_ending)(i)?;
 
+    let mut parts: Vec<&'a str> = Vec::new();
+    let (i, baz) = not_line_ending(i)?;
+    parts.push(baz);
+
+    let mut i = i;
+    if baz.ends_with("\\") {
+        loop {
+            //println!("{}", i);
+            let (j, _) = line_ending(i)?;
+            //println!("{}", j);
+            let (j, _) = space0(j)?;
+            //println!("{}", j);
+            let (j, p) = not_line_ending(j)?;
+            i = j;
+            parts.push(p);
+            if !p.ends_with("\\") {
+                break;
+            }
+        }
+    }
+    let (i, _) = many0(line_ending)(i)?;
     Ok((
         i,
         Variable {
             name: foo,
             assignment: bar,
-            value: baz,
+            value: parts,
         },
     ))
 }
 
 #[test]
 fn test_parse_variable() {
-    let data = "foo=bar\n";
+    assert_eq!(
+        parse_variable("foo := bar\r\n"),
+        Ok((
+            "",
+            Variable {
+                name: "foo",
+                assignment: Assignment::Simple,
+                value: vec!("bar")
+            }
+        ))
+    );
+    assert_eq!(
+        parse_variable("foo=\n"),
+        Ok((
+            "",
+            Variable {
+                name: "foo",
+                assignment: Assignment::Recursive,
+                value: vec!("")
+            }
+        ))
+    );
+}
+
+#[test]
+fn test_parse_multiline_variable() {
+    let data = "CFLAGS = $(CDEBUG) -I. -I$(srcdir) $(DEFS) \\\n\t\t-DDEF_AR_FILE=\\\"$(DEF_AR_FILE)\\\" \\\n\t\t-DDEFBLOCKING=$(DEFBLOCKING)\n";
     let res = parse_variable(data);
     match res {
-        Ok((_, o)) => {
-            assert_eq!(o.name, "foo");
+        Ok((i, o)) => {
+            assert_eq!(o.name, "CFLAGS");
             assert_eq!(o.assignment, Assignment::Recursive);
-            assert_eq!(o.value, "bar");
+            assert_eq!(o.value.len(), 3);
+            assert_eq!(i, "");
         }
         Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => {
             println!("{}", convert_error(data, e));
@@ -158,6 +187,7 @@ fn test_parse_variable() {
 // [xyz]* or [a-z] is a list of characters
 fn is_target_character(c: char) -> bool {
     match c {
+        '#' => false,
         '%' => false,
         ':' => false,
         '|' => false,
@@ -176,56 +206,54 @@ fn parse_target_name<'a>(i: &'a str) -> IResult<&'a str, &'a str, VerboseError<&
     take_while(is_target_character)(i)
 }
 
-macro_rules! test_target {
-    ($name:ident, $i:expr, $o:expr) => {
-        #[test]
-        fn $name() {
-            let res = parse_target_name($i);
-            match res {
-                Ok((i, _)) => {
-                    assert_eq!(i, $o);
-                }
-                Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => {
-                    println!("{}", convert_error($i, e));
-                    panic!();
-                }
-                Err(nom::Err::Incomplete(_)) => unreachable!(),
-            }
-        }
-    };
+#[test]
+fn test_parse_target_name() {
+    assert_eq!(parse_target_name("foo.c"), Ok(("", "foo.c")));
+    assert_eq!(parse_target_name("foo.*"), Ok(("", "foo.*")));
+    assert_eq!(parse_target_name("$(SRCS)"), Ok(("", "$(SRCS)")));
+    assert_eq!(parse_target_name("foo.[abc]??"), Ok(("", "foo.[abc]??")));
+    assert_eq!(parse_target_name("/usr/src/foo"), Ok(("", "/usr/src/foo")));
+    assert_eq!(
+        parse_target_name(".\\file\\foo.ps1"),
+        Ok(("", ".\\file\\foo.ps1"))
+    );
+    assert_eq!(parse_target_name("file<"), Ok(("<", "file")));
 }
 
-test_target!(test_target_1, "foo.c:", ":");
-test_target!(test_target_2, "foo.* :", " :");
-test_target!(test_target_3, "foo.[abc]?? :", " :");
-test_target!(test_target_4, "/usr/src/foo:", ":");
-test_target!(test_target_5, ".\\file\\foo.ps1:", ":");
-test_target!(test_target_6, "file<", "<");
-test_target!(test_target_7, "\n", "\n");
+fn parse_comment<'a>(i: &'a str) -> IResult<&'a str, &'a str, VerboseError<&'a str>> {
+    let (i, _) = many1(tuple((tag("#"), not_line_ending, many0(line_ending))))(i)?;
+    Ok((i, ""))
+}
 
-fn parse_recipe<'a>(i: &'a str) -> IResult<&'a str, String, VerboseError<&'a str>> {
+#[test]
+fn test_parse_comment() {
+    assert_eq!(parse_comment("#comment\n"), Ok(("", "")));
+    assert_eq!(
+        parse_comment("# Set this to rtapelib.o unless you defined NO_REMOTE,\n# in which case make it empty.\n"),
+         Ok(("",""))
+    );
+}
+
+fn parse_recipe<'a>(i: &'a str) -> IResult<&'a str, &'a str, VerboseError<&'a str>> {
     let (i, _) = space1(i)?;
-    let (i, recipe) = escaped_transform(
-        take_while1(|c| c != '\\' && c != '\n' && c != '\r'),
-        '\\',
-        |s: &str| {
-            alt!(s,
-                  tag!("\n")       => { |_| "\n" }
-                | tag!("\r\n")       => { |_| "\r\n" }
-            )
-        },
-    )(i)?;
+    let (i, recipe) = opt(not_line_ending)(i)?;
     let (i, _) = many0(line_ending)(i)?;
-    Ok((i, recipe))
+    Ok((
+        i,
+        match recipe {
+            Some(r) => r,
+            None => "",
+        },
+    ))
 }
 
 #[test]
 fn test_parse_recipe_single() {
-    let data = "\tcc -c main.c\n";
+    let data = "\tshar $(SRCS) $(AUX) | compress\n";
     let res = parse_recipe(data);
     match res {
         Ok((_, o)) => {
-            assert_eq!(o, "cc -c main.c");
+            assert_eq!(o, "shar $(SRCS) $(AUX) | compress");
         }
         Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => {
             println!("{}", convert_error(data, e));
@@ -235,34 +263,18 @@ fn test_parse_recipe_single() {
     }
 }
 
-#[test]
-fn test_parse_recipe_multi() {
-    let data = "\tcc -c main.c\\\n\t\tfoo bar baz quuz\n";
-    let res = parse_recipe(data);
-    match res {
-        Ok((_, o)) => {
-            assert_eq!(o, "cc -c main.c\n\t\tfoo bar baz quuz");
-        }
-        Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => {
-            println!("{}", convert_error(data, e));
-            panic!();
-        }
-        Err(nom::Err::Incomplete(_)) => unreachable!(),
-    }
-}
-
-fn parse_recipes<'a>(i: &'a str) -> IResult<&'a str, Vec<String>, VerboseError<&'a str>> {
+fn parse_recipes<'a>(i: &'a str) -> IResult<&'a str, Vec<&'a str>, VerboseError<&'a str>> {
     many0(parse_recipe)(i)
 }
 
 #[test]
 fn test_parse_recipe_list() {
-    let data = "\tcc -c main.c\n\tfoo bar baz\n";
+    let data = "\tcc -c main.c \\\n\tfoo bar baz\n";
     let res = parse_recipes(data);
     match res {
         Ok((_, o)) => {
             assert_eq!(o.len(), 2);
-            assert_eq!(o[0], "cc -c main.c");
+            assert_eq!(o[0], "cc -c main.c \\");
             assert_eq!(o[1], "foo bar baz");
         }
         Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => {
@@ -284,7 +296,7 @@ fn parse_target_names<'a>(i: &'a str) -> IResult<&'a str, &'a str, VerboseError<
 }
 
 #[test]
-fn test_parse_target_name() {
+fn test_parse_target_names() {
     assert_eq!(parse_target_names("main.c"), Ok(("", "main.c")));
     assert_eq!(parse_target_names(" main.c"), Ok(("", "main.c")));
     assert_eq!(parse_target_names("main.c "), Ok(("", "main.c")));
@@ -415,7 +427,7 @@ fn test_parse_target_no_prereq() {
         Ok((_, o)) => {
             assert!(o.targets.contains(&"clean"));
             assert_eq!(o.prerequsities.len(), 0);
-            assert_eq!(o.recipe.len(), 1);
+            assert_eq!(o.recipe.len(), 2);
         }
         Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => {
             println!("{}", convert_error(data, e));
@@ -435,7 +447,26 @@ fn test_parse_target_split_prereqs_and_recipe() {
             assert!(o.prerequsities.contains(&"main.o"));
             assert!(o.prerequsities.contains(&"utils.o"));
             assert_eq!(o.prerequsities.len(), 8);
-            assert_eq!(o.recipe.len(), 1);
+            assert_eq!(o.recipe.len(), 2);
+        }
+        Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => {
+            println!("{}", convert_error(data, e));
+            panic!();
+        }
+        Err(nom::Err::Incomplete(_)) => unreachable!(),
+    }
+}
+
+#[test]
+fn test_parse_phony_target() {
+    let data = ".PHONY: all\n";
+    let res = parse_rule(data);
+    match res {
+        Ok((_, o)) => {
+            assert!(o.targets.contains(&".PHONY"));
+            assert_eq!(o.prerequsities.len(), 1);
+            assert_eq!(o.prerequsities[0], "all");
+            assert_eq!(o.recipe.len(), 0);
         }
         Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => {
             println!("{}", convert_error(data, e));
@@ -455,19 +486,27 @@ pub fn parse_makefile<'a>(i: &'a str) -> IResult<&'a str, Makefile, VerboseError
         if i.is_empty() {
             break;
         }
-        match parse_variable(i) {
-            Ok((j, o)) => {
-                i = j;
-                res.variables.push(o);
-            }
-            Err(_) => match parse_rule(i) {
-                Ok((j, o)) => {
+        match line_ending::<_, VerboseError<&str>>(i) {
+            Ok((j, _)) => i = j,
+            Err(_) => match parse_comment(i) {
+                Ok((j, _)) => {
                     i = j;
-                    res.rules.push(o);
                 }
-                Err(e) => {
-                    return Err(e);
-                }
+                Err(_) => match parse_variable(i) {
+                    Ok((j, o)) => {
+                        i = j;
+                        res.variables.push(o);
+                    }
+                    Err(_) => match parse_rule(i) {
+                        Ok((j, o)) => {
+                            i = j;
+                            res.rules.push(o);
+                        }
+                        Err(e) => {
+                            return Err(e);
+                        }
+                    },
+                },
             },
         }
     }
@@ -475,13 +514,13 @@ pub fn parse_makefile<'a>(i: &'a str) -> IResult<&'a str, Makefile, VerboseError
 }
 
 #[test]
-fn test_parse_makefile() {
+fn test_parse_makefile_simple() {
     let data = fs::read_to_string("./assets/01-simple.mk").expect("ohnoes");
     let data_s = &data[..];
     let res = parse_makefile(data_s);
     match res {
         Ok((_, o)) => {
-            assert_eq!(o.variables.len(), 3);            
+            assert_eq!(o.variables.len(), 3);
             assert_eq!(o.rules.len(), 10);
             assert!(o.rules[0].targets.contains(&"edit"));
             assert_eq!(o.rules[0].prerequsities.len(), 8);
@@ -489,6 +528,28 @@ fn test_parse_makefile() {
             assert!(o.rules[0].prerequsities.contains(&"utils.o"));
             assert!(o.rules[1].targets.contains(&"main.o"));
             assert!(o.rules[9].targets.contains(&"clean"));
+        }
+        Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => {
+            println!("{}", convert_error(data_s, e));
+            panic!();
+        }
+        Err(nom::Err::Incomplete(_)) => unreachable!(),
+    }
+}
+
+#[test]
+fn test_parse_makefile_complex() {
+    let data = fs::read_to_string("./assets/02-complex.mk").expect("ohnoes");
+    let data_s = &data[..];
+    let res = parse_makefile(data_s);
+    match res {
+        Ok((_, o)) => {
+            assert_eq!(o.variables.len(), 23);
+            assert_eq!(o.rules.len(), 23);
+            assert!(o.rules[0].targets.contains(&".PHONY"));
+            assert_eq!(o.rules[0].prerequsities.len(), 1);
+            assert!(o.rules[0].prerequsities.contains(&"all"));
+            assert!(o.rules[22].targets.contains(&"tar.zoo"));
         }
         Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => {
             println!("{}", convert_error(data_s, e));

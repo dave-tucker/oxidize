@@ -7,3 +7,4 @@ edition = "2018"
 [dependencies]
 nom = "5.0.0"
 daggy = "0.6.0"
+clap = "2.3.3"

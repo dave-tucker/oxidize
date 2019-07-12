@@ -4,7 +4,7 @@ oxidize
 ## What is oxidize
 
 `oxidize` is designed to be a fast, flexible, drop-in replacement for GNU Make.
-As the Makefile syntax isn't exactly well-defined (there is no grammar for it and one will never be develpped) it may not be possible to support 100% of all the Makefiles out there.
+As the Makefile syntax isn't exactly well-defined (there is no grammar for it and one will never be developed) it may not be possible to support 100% of all the Makefiles out there.
 I hope that it should be able to cover 80% of the use cases.
 
 ## Why replace make?
