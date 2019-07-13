@@ -1,15 +1,13 @@
 use nom::{
-    alt,
     branch::alt,
-    bytes::complete::{escaped_transform, tag, take_while, take_while1},
-    character::complete::{line_ending, not_line_ending, one_of, space0, space1},
+    bytes::complete::{tag, take_while},
+    character::complete::{line_ending, not_line_ending, space0, space1},
     combinator::{map, opt},
-    error::{context, convert_error, make_error, ErrorKind, VerboseError},
+    error::{context, make_error, ErrorKind, VerboseError},
     multi::{many0, many1},
     sequence::tuple,
-    tag, IResult,
+    IResult,
 };
-use std::fs;
 
 use crate::types::*;
 
@@ -24,32 +22,6 @@ fn parse_assignment_op<'a>(i: &'a str) -> IResult<&'a str, Assignment, VerboseEr
         map(tag("::="), |_| Assignment::Simple),
     ))(i)
 }
-
-macro_rules! test_op {
-    ($name:ident, $i:expr, $o:expr) => {
-        #[test]
-        fn $name() {
-            let res = parse_assignment_op($i);
-            match res {
-                Ok((_, o)) => {
-                    assert_eq!($o, o);
-                }
-                Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => {
-                    println!("{}", convert_error($i, e));
-                    panic!();
-                }
-                Err(nom::Err::Incomplete(_)) => unreachable!(),
-            }
-        }
-    };
-}
-
-test_op!(test_parse_cond_op, "?=", Assignment::Conditional);
-test_op!(test_parse_simple_op1, ":=", Assignment::Simple);
-test_op!(test_parse_simple_op2, "::=", Assignment::Simple);
-test_op!(test_parse_shell, "!=", Assignment::Shell);
-test_op!(test_parse_recursive_op, "=", Assignment::Recursive);
-test_op!(test_parse_append_op, "+=", Assignment::Append);
 
 // A variable name may be any sequence of characters not containing ‘:’, ‘#’, ‘=’, or whitespace
 // I am also including ? and ! as these can conflict with the assignment operator
@@ -68,32 +40,9 @@ fn is_variable_name(c: char) -> bool {
     }
 }
 
-#[test]
-fn test_is_variable_name() {
-    if is_variable_name('?') {
-        panic!("not a var name")
-    }
-    if is_variable_name('#') {
-        panic!("not a var name")
-    }
-    if !is_variable_name('2') {
-        panic!("it's a valid char")
-    }
-    if !is_variable_name('a') {
-        panic!("it's a valid char")
-    }
-}
-
 // parse_variable_name takes valid variable name characters
 fn parse_variable_name<'a>(i: &'a str) -> IResult<&'a str, &'a str, VerboseError<&'a str>> {
     take_while(is_variable_name)(i)
-}
-
-#[test]
-fn test_parse_variable_name() {
-    assert_eq!(parse_variable_name("bar#"), Ok(("#", "bar")));
-    assert_eq!(parse_variable_name("b?ar"), Ok(("?ar", "b")));
-    assert_eq!(parse_variable_name("b? ar"), Ok(("? ar", "b")));
 }
 
 // Parse Variable
@@ -134,51 +83,6 @@ fn parse_variable<'a>(i: &'a str) -> IResult<&'a str, Variable, VerboseError<&'a
     ))
 }
 
-#[test]
-fn test_parse_variable() {
-    assert_eq!(
-        parse_variable("foo := bar\r\n"),
-        Ok((
-            "",
-            Variable {
-                name: "foo",
-                assignment: Assignment::Simple,
-                value: vec!("bar")
-            }
-        ))
-    );
-    assert_eq!(
-        parse_variable("foo=\n"),
-        Ok((
-            "",
-            Variable {
-                name: "foo",
-                assignment: Assignment::Recursive,
-                value: vec!("")
-            }
-        ))
-    );
-}
-
-#[test]
-fn test_parse_multiline_variable() {
-    let data = "CFLAGS = $(CDEBUG) -I. -I$(srcdir) $(DEFS) \\\n\t\t-DDEF_AR_FILE=\\\"$(DEF_AR_FILE)\\\" \\\n\t\t-DDEFBLOCKING=$(DEFBLOCKING)\n";
-    let res = parse_variable(data);
-    match res {
-        Ok((i, o)) => {
-            assert_eq!(o.name, "CFLAGS");
-            assert_eq!(o.assignment, Assignment::Recursive);
-            assert_eq!(o.value.len(), 3);
-            assert_eq!(i, "");
-        }
-        Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => {
-            println!("{}", convert_error(data, e));
-            panic!();
-        }
-        Err(nom::Err::Incomplete(_)) => unreachable!(),
-    }
-}
-
 // The Make Manual says it should be a filename but can include wildcards
 // We'll use the cross-section of POSIX and Windows standards here
 // Wildcards:
@@ -206,32 +110,9 @@ fn parse_target_name<'a>(i: &'a str) -> IResult<&'a str, &'a str, VerboseError<&
     take_while(is_target_character)(i)
 }
 
-#[test]
-fn test_parse_target_name() {
-    assert_eq!(parse_target_name("foo.c"), Ok(("", "foo.c")));
-    assert_eq!(parse_target_name("foo.*"), Ok(("", "foo.*")));
-    assert_eq!(parse_target_name("$(SRCS)"), Ok(("", "$(SRCS)")));
-    assert_eq!(parse_target_name("foo.[abc]??"), Ok(("", "foo.[abc]??")));
-    assert_eq!(parse_target_name("/usr/src/foo"), Ok(("", "/usr/src/foo")));
-    assert_eq!(
-        parse_target_name(".\\file\\foo.ps1"),
-        Ok(("", ".\\file\\foo.ps1"))
-    );
-    assert_eq!(parse_target_name("file<"), Ok(("<", "file")));
-}
-
 fn parse_comment<'a>(i: &'a str) -> IResult<&'a str, &'a str, VerboseError<&'a str>> {
     let (i, _) = many1(tuple((tag("#"), not_line_ending, many0(line_ending))))(i)?;
     Ok((i, ""))
-}
-
-#[test]
-fn test_parse_comment() {
-    assert_eq!(parse_comment("#comment\n"), Ok(("", "")));
-    assert_eq!(
-        parse_comment("# Set this to rtapelib.o unless you defined NO_REMOTE,\n# in which case make it empty.\n"),
-         Ok(("",""))
-    );
 }
 
 fn parse_recipe<'a>(i: &'a str) -> IResult<&'a str, &'a str, VerboseError<&'a str>> {
@@ -247,42 +128,8 @@ fn parse_recipe<'a>(i: &'a str) -> IResult<&'a str, &'a str, VerboseError<&'a st
     ))
 }
 
-#[test]
-fn test_parse_recipe_single() {
-    let data = "\tshar $(SRCS) $(AUX) | compress\n";
-    let res = parse_recipe(data);
-    match res {
-        Ok((_, o)) => {
-            assert_eq!(o, "shar $(SRCS) $(AUX) | compress");
-        }
-        Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => {
-            println!("{}", convert_error(data, e));
-            panic!();
-        }
-        Err(nom::Err::Incomplete(_)) => unreachable!(),
-    }
-}
-
 fn parse_recipes<'a>(i: &'a str) -> IResult<&'a str, Vec<&'a str>, VerboseError<&'a str>> {
     many0(parse_recipe)(i)
-}
-
-#[test]
-fn test_parse_recipe_list() {
-    let data = "\tcc -c main.c \\\n\tfoo bar baz\n";
-    let res = parse_recipes(data);
-    match res {
-        Ok((_, o)) => {
-            assert_eq!(o.len(), 2);
-            assert_eq!(o[0], "cc -c main.c \\");
-            assert_eq!(o[1], "foo bar baz");
-        }
-        Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => {
-            println!("{}", convert_error(data, e));
-            panic!();
-        }
-        Err(nom::Err::Incomplete(_)) => unreachable!(),
-    }
 }
 
 fn parse_target_names<'a>(i: &'a str) -> IResult<&'a str, &'a str, VerboseError<&'a str>> {
@@ -295,25 +142,8 @@ fn parse_target_names<'a>(i: &'a str) -> IResult<&'a str, &'a str, VerboseError<
     }
 }
 
-#[test]
-fn test_parse_target_names() {
-    assert_eq!(parse_target_names("main.c"), Ok(("", "main.c")));
-    assert_eq!(parse_target_names(" main.c"), Ok(("", "main.c")));
-    assert_eq!(parse_target_names("main.c "), Ok(("", "main.c")));
-    assert_eq!(parse_target_names(" main.c "), Ok(("", "main.c")));
-    assert_eq!(parse_target_names(" main.c\n :"), Ok(("\n :", "main.c")));
-}
-
 fn parse_target_list<'a>(i: &'a str) -> IResult<&'a str, Vec<&'a str>, VerboseError<&'a str>> {
     many1(parse_target_names)(i)
-}
-
-#[test]
-fn test_parse_target_name_list() {
-    assert_eq!(
-        parse_target_list("main.c main.o:"),
-        Ok((":", vec!["main.c", "main.o"]))
-    );
 }
 
 fn parse_prereqs<'a>(i: &'a str) -> IResult<&'a str, &'a str, VerboseError<&'a str>> {
@@ -328,54 +158,8 @@ fn parse_prereqs<'a>(i: &'a str) -> IResult<&'a str, &'a str, VerboseError<&'a s
     }
 }
 
-#[test]
-fn test_parse_prereq_literal() {
-    assert_eq!(parse_prereqs("main.c"), Ok(("", "main.c")));
-    assert_eq!(parse_prereqs(" main.c"), Ok(("", "main.c")));
-    assert_eq!(parse_prereqs("main.c "), Ok(("", "main.c")));
-    assert_eq!(parse_prereqs(" main.c "), Ok(("", "main.c")));
-    assert_eq!(parse_prereqs(" main.c \\\n"), Ok(("", "main.c")));
-}
-
 fn parse_prereqs_list<'a>(i: &'a str) -> IResult<&'a str, Vec<&'a str>, VerboseError<&'a str>> {
     many0(parse_prereqs)(i)
-}
-
-#[test]
-fn test_parse_prereqs_no_breaks() {
-    let data = "main.o foo.o bar.o baz.o quuz.o\n";
-    let res = parse_prereqs_list(data);
-    match res {
-        Ok((i, o)) => {
-            assert_eq!(o.len(), 5);
-            assert_eq!(o[0], "main.o");
-            assert_eq!(o[4], "quuz.o");
-            assert_eq!(i, "\n");
-        }
-        Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => {
-            println!("{}", convert_error(data, e));
-            panic!();
-        }
-        Err(nom::Err::Incomplete(_)) => unreachable!(),
-    }
-}
-
-#[test]
-fn test_parse_prereqs_list_breaks() {
-    let data = "main.o foo.o bar.o \\\n\t\t\t baz.o quuz.o\n";
-    let res = parse_prereqs_list(data);
-    match res {
-        Ok((_, o)) => {
-            assert_eq!(o.len(), 5);
-            assert_eq!(o[0], "main.o");
-            assert_eq!(o[4], "quuz.o");
-        }
-        Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => {
-            println!("{}", convert_error(data, e));
-            panic!();
-        }
-        Err(nom::Err::Incomplete(_)) => unreachable!(),
-    }
 }
 
 fn parse_rule<'a>(i: &'a str) -> IResult<&'a str, Rule, VerboseError<&'a str>> {
@@ -395,85 +179,6 @@ fn parse_rule<'a>(i: &'a str) -> IResult<&'a str, Rule, VerboseError<&'a str>> {
             recipe: recipe,
         },
     ))
-}
-
-#[test]
-fn test_parse_target_with_prereq() {
-    let data = "main.o : main.c defs.h\n\tcc -c main.c\n";
-    let res = parse_rule(data);
-    match res {
-        Ok((_, o)) => {
-            assert!(o.targets.contains(&"main.o"));
-            assert_eq!(o.prerequsities.len(), 2);
-            assert_eq!(o.prerequsities[0], "main.c");
-            assert_eq!(o.prerequsities[1], "defs.h");
-            assert_eq!(o.recipe.len(), 1);
-            assert_eq!(o.recipe[0], "cc -c main.c");
-        }
-        Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => {
-            println!("{}", convert_error(data, e));
-            panic!();
-        }
-        Err(nom::Err::Incomplete(_)) => unreachable!(),
-    }
-}
-
-#[test]
-fn test_parse_target_no_prereq() {
-    let data =
-        "clean :\n\trm edit main.o kbd.o command.o display.o \\\n\t\tinsert.o search.o files.o utils.o\n";
-    let res = parse_rule(data);
-    match res {
-        Ok((_, o)) => {
-            assert!(o.targets.contains(&"clean"));
-            assert_eq!(o.prerequsities.len(), 0);
-            assert_eq!(o.recipe.len(), 2);
-        }
-        Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => {
-            println!("{}", convert_error(data, e));
-            panic!();
-        }
-        Err(nom::Err::Incomplete(_)) => unreachable!(),
-    }
-}
-
-#[test]
-fn test_parse_target_split_prereqs_and_recipe() {
-    let data = "edit : main.o kbd.o command.o display.o \\\n\tinsert.o search.o files.o utils.o\n\tcc -o edit main.o kbd.o command.o display.o \\\n\tinsert.o search.o files.o utils.o\n";
-    let res = parse_rule(data);
-    match res {
-        Ok((_, o)) => {
-            assert!(o.targets.contains(&"edit"));
-            assert!(o.prerequsities.contains(&"main.o"));
-            assert!(o.prerequsities.contains(&"utils.o"));
-            assert_eq!(o.prerequsities.len(), 8);
-            assert_eq!(o.recipe.len(), 2);
-        }
-        Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => {
-            println!("{}", convert_error(data, e));
-            panic!();
-        }
-        Err(nom::Err::Incomplete(_)) => unreachable!(),
-    }
-}
-
-#[test]
-fn test_parse_phony_target() {
-    let data = ".PHONY: all\n";
-    let res = parse_rule(data);
-    match res {
-        Ok((_, o)) => {
-            assert!(o.targets.contains(&".PHONY"));
-            assert_eq!(o.prerequsities.len(), 1);
-            assert_eq!(o.prerequsities[0], "all");
-            assert_eq!(o.recipe.len(), 0);
-        }
-        Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => {
-            println!("{}", convert_error(data, e));
-            panic!();
-        }
-        Err(nom::Err::Incomplete(_)) => unreachable!(),
-    }
 }
 
 pub fn parse_makefile<'a>(i: &'a str) -> IResult<&'a str, Makefile, VerboseError<&'a str>> {
@@ -513,48 +218,349 @@ pub fn parse_makefile<'a>(i: &'a str) -> IResult<&'a str, Makefile, VerboseError
     Ok((i, res))
 }
 
-#[test]
-fn test_parse_makefile_simple() {
-    let data = fs::read_to_string("./assets/01-simple.mk").expect("ohnoes");
-    let data_s = &data[..];
-    let res = parse_makefile(data_s);
-    match res {
-        Ok((_, o)) => {
-            assert_eq!(o.variables.len(), 3);
-            assert_eq!(o.rules.len(), 10);
-            assert!(o.rules[0].targets.contains(&"edit"));
-            assert_eq!(o.rules[0].prerequsities.len(), 8);
-            assert!(o.rules[0].prerequsities.contains(&"main.o"));
-            assert!(o.rules[0].prerequsities.contains(&"utils.o"));
-            assert!(o.rules[1].targets.contains(&"main.o"));
-            assert!(o.rules[9].targets.contains(&"clean"));
-        }
-        Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => {
-            println!("{}", convert_error(data_s, e));
-            panic!();
-        }
-        Err(nom::Err::Incomplete(_)) => unreachable!(),
-    }
-}
+#[cfg(test)]
+mod test {
+    use super::*;
+    use nom::error::convert_error;
+    use std::fs;
 
-#[test]
-fn test_parse_makefile_complex() {
-    let data = fs::read_to_string("./assets/02-complex.mk").expect("ohnoes");
-    let data_s = &data[..];
-    let res = parse_makefile(data_s);
-    match res {
-        Ok((_, o)) => {
-            assert_eq!(o.variables.len(), 23);
-            assert_eq!(o.rules.len(), 23);
-            assert!(o.rules[0].targets.contains(&".PHONY"));
-            assert_eq!(o.rules[0].prerequsities.len(), 1);
-            assert!(o.rules[0].prerequsities.contains(&"all"));
-            assert!(o.rules[22].targets.contains(&"tar.zoo"));
-        }
-        Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => {
-            println!("{}", convert_error(data_s, e));
-            panic!();
-        }
-        Err(nom::Err::Incomplete(_)) => unreachable!(),
+    macro_rules! test_op {
+        ($name:ident, $i:expr, $o:expr) => {
+            #[test]
+            fn $name() {
+                let res = parse_assignment_op($i);
+                match res {
+                    Ok((_, o)) => {
+                        assert_eq!($o, o);
+                    }
+                    Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => {
+                        println!("{}", convert_error($i, e));
+                        panic!();
+                    }
+                    Err(nom::Err::Incomplete(_)) => unreachable!(),
+                }
+            }
+        };
     }
+
+    test_op!(test_parse_cond_op, "?=", Assignment::Conditional);
+    test_op!(test_parse_simple_op1, ":=", Assignment::Simple);
+    test_op!(test_parse_simple_op2, "::=", Assignment::Simple);
+    test_op!(test_parse_shell, "!=", Assignment::Shell);
+    test_op!(test_parse_recursive_op, "=", Assignment::Recursive);
+    test_op!(test_parse_append_op, "+=", Assignment::Append);
+
+    #[test]
+    fn test_is_variable_name() {
+        if is_variable_name('?') {
+            panic!("not a var name")
+        }
+        if is_variable_name('#') {
+            panic!("not a var name")
+        }
+        if !is_variable_name('2') {
+            panic!("it's a valid char")
+        }
+        if !is_variable_name('a') {
+            panic!("it's a valid char")
+        }
+    }
+
+    #[test]
+    fn test_parse_variable_name() {
+        assert_eq!(parse_variable_name("bar#"), Ok(("#", "bar")));
+        assert_eq!(parse_variable_name("b?ar"), Ok(("?ar", "b")));
+        assert_eq!(parse_variable_name("b? ar"), Ok(("? ar", "b")));
+    }
+
+    #[test]
+    fn test_parse_variable() {
+        assert_eq!(
+            parse_variable("foo := bar\r\n"),
+            Ok((
+                "",
+                Variable {
+                    name: "foo",
+                    assignment: Assignment::Simple,
+                    value: vec!("bar")
+                }
+            ))
+        );
+        assert_eq!(
+            parse_variable("foo=\n"),
+            Ok((
+                "",
+                Variable {
+                    name: "foo",
+                    assignment: Assignment::Recursive,
+                    value: vec!("")
+                }
+            ))
+        );
+    }
+
+    #[test]
+    fn test_parse_multiline_variable() {
+        let data = "CFLAGS = $(CDEBUG) -I. -I$(srcdir) $(DEFS) \\\n\t\t-DDEF_AR_FILE=\\\"$(DEF_AR_FILE)\\\" \\\n\t\t-DDEFBLOCKING=$(DEFBLOCKING)\n";
+        let res = parse_variable(data);
+        match res {
+            Ok((i, o)) => {
+                assert_eq!(o.name, "CFLAGS");
+                assert_eq!(o.assignment, Assignment::Recursive);
+                assert_eq!(o.value.len(), 3);
+                assert_eq!(i, "");
+            }
+            Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => {
+                println!("{}", convert_error(data, e));
+                panic!();
+            }
+            Err(nom::Err::Incomplete(_)) => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn test_parse_target_name() {
+        assert_eq!(parse_target_name("foo.c"), Ok(("", "foo.c")));
+        assert_eq!(parse_target_name("foo.*"), Ok(("", "foo.*")));
+        assert_eq!(parse_target_name("$(SRCS)"), Ok(("", "$(SRCS)")));
+        assert_eq!(parse_target_name("foo.[abc]??"), Ok(("", "foo.[abc]??")));
+        assert_eq!(parse_target_name("/usr/src/foo"), Ok(("", "/usr/src/foo")));
+        assert_eq!(
+            parse_target_name(".\\file\\foo.ps1"),
+            Ok(("", ".\\file\\foo.ps1"))
+        );
+        assert_eq!(parse_target_name("file<"), Ok(("<", "file")));
+    }
+
+    #[test]
+    fn test_parse_comment() {
+        assert_eq!(parse_comment("#comment\n"), Ok(("", "")));
+        assert_eq!(
+        parse_comment("# Set this to rtapelib.o unless you defined NO_REMOTE,\n# in which case make it empty.\n"),
+         Ok(("",""))
+    );
+    }
+
+    #[test]
+    fn test_parse_recipe_single() {
+        let data = "\tshar $(SRCS) $(AUX) | compress\n";
+        let res = parse_recipe(data);
+        match res {
+            Ok((_, o)) => {
+                assert_eq!(o, "shar $(SRCS) $(AUX) | compress");
+            }
+            Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => {
+                println!("{}", convert_error(data, e));
+                panic!();
+            }
+            Err(nom::Err::Incomplete(_)) => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn test_parse_recipe_list() {
+        let data = "\tcc -c main.c \\\n\tfoo bar baz\n";
+        let res = parse_recipes(data);
+        match res {
+            Ok((_, o)) => {
+                assert_eq!(o.len(), 2);
+                assert_eq!(o[0], "cc -c main.c \\");
+                assert_eq!(o[1], "foo bar baz");
+            }
+            Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => {
+                println!("{}", convert_error(data, e));
+                panic!();
+            }
+            Err(nom::Err::Incomplete(_)) => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn test_parse_prereq_literal() {
+        assert_eq!(parse_prereqs("main.c"), Ok(("", "main.c")));
+        assert_eq!(parse_prereqs(" main.c"), Ok(("", "main.c")));
+        assert_eq!(parse_prereqs("main.c "), Ok(("", "main.c")));
+        assert_eq!(parse_prereqs(" main.c "), Ok(("", "main.c")));
+        assert_eq!(parse_prereqs(" main.c \\\n"), Ok(("", "main.c")));
+    }
+
+    #[test]
+    fn test_parse_prereqs_no_breaks() {
+        let data = "main.o foo.o bar.o baz.o quuz.o\n";
+        let res = parse_prereqs_list(data);
+        match res {
+            Ok((i, o)) => {
+                assert_eq!(o.len(), 5);
+                assert_eq!(o[0], "main.o");
+                assert_eq!(o[4], "quuz.o");
+                assert_eq!(i, "\n");
+            }
+            Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => {
+                println!("{}", convert_error(data, e));
+                panic!();
+            }
+            Err(nom::Err::Incomplete(_)) => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn test_parse_prereqs_list_breaks() {
+        let data = "main.o foo.o bar.o \\\n\t\t\t baz.o quuz.o\n";
+        let res = parse_prereqs_list(data);
+        match res {
+            Ok((_, o)) => {
+                assert_eq!(o.len(), 5);
+                assert_eq!(o[0], "main.o");
+                assert_eq!(o[4], "quuz.o");
+            }
+            Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => {
+                println!("{}", convert_error(data, e));
+                panic!();
+            }
+            Err(nom::Err::Incomplete(_)) => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn test_parse_target_with_prereq() {
+        let data = "main.o : main.c defs.h\n\tcc -c main.c\n";
+        let res = parse_rule(data);
+        match res {
+            Ok((_, o)) => {
+                assert!(o.targets.contains(&"main.o"));
+                assert_eq!(o.prerequsities.len(), 2);
+                assert_eq!(o.prerequsities[0], "main.c");
+                assert_eq!(o.prerequsities[1], "defs.h");
+                assert_eq!(o.recipe.len(), 1);
+                assert_eq!(o.recipe[0], "cc -c main.c");
+            }
+            Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => {
+                println!("{}", convert_error(data, e));
+                panic!();
+            }
+            Err(nom::Err::Incomplete(_)) => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn test_parse_target_no_prereq() {
+        let data =
+        "clean :\n\trm edit main.o kbd.o command.o display.o \\\n\t\tinsert.o search.o files.o utils.o\n";
+        let res = parse_rule(data);
+        match res {
+            Ok((_, o)) => {
+                assert!(o.targets.contains(&"clean"));
+                assert_eq!(o.prerequsities.len(), 0);
+                assert_eq!(o.recipe.len(), 2);
+            }
+            Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => {
+                println!("{}", convert_error(data, e));
+                panic!();
+            }
+            Err(nom::Err::Incomplete(_)) => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn test_parse_target_split_prereqs_and_recipe() {
+        let data = "edit : main.o kbd.o command.o display.o \\\n\tinsert.o search.o files.o utils.o\n\tcc -o edit main.o kbd.o command.o display.o \\\n\tinsert.o search.o files.o utils.o\n";
+        let res = parse_rule(data);
+        match res {
+            Ok((_, o)) => {
+                assert!(o.targets.contains(&"edit"));
+                assert!(o.prerequsities.contains(&"main.o"));
+                assert!(o.prerequsities.contains(&"utils.o"));
+                assert_eq!(o.prerequsities.len(), 8);
+                assert_eq!(o.recipe.len(), 2);
+            }
+            Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => {
+                println!("{}", convert_error(data, e));
+                panic!();
+            }
+            Err(nom::Err::Incomplete(_)) => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn test_parse_phony_target() {
+        let data = ".PHONY: all\n";
+        let res = parse_rule(data);
+        match res {
+            Ok((_, o)) => {
+                assert!(o.targets.contains(&".PHONY"));
+                assert_eq!(o.prerequsities.len(), 1);
+                assert_eq!(o.prerequsities[0], "all");
+                assert_eq!(o.recipe.len(), 0);
+            }
+            Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => {
+                println!("{}", convert_error(data, e));
+                panic!();
+            }
+            Err(nom::Err::Incomplete(_)) => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn test_parse_target_names() {
+        assert_eq!(parse_target_names("main.c"), Ok(("", "main.c")));
+        assert_eq!(parse_target_names(" main.c"), Ok(("", "main.c")));
+        assert_eq!(parse_target_names("main.c "), Ok(("", "main.c")));
+        assert_eq!(parse_target_names(" main.c "), Ok(("", "main.c")));
+        assert_eq!(parse_target_names(" main.c\n :"), Ok(("\n :", "main.c")));
+    }
+
+    #[test]
+    fn test_parse_target_name_list() {
+        assert_eq!(
+            parse_target_list("main.c main.o:"),
+            Ok((":", vec!["main.c", "main.o"]))
+        );
+    }
+
+    #[test]
+    fn test_parse_makefile_simple() {
+        let data = fs::read_to_string("./assets/01-simple.mk").expect("ohnoes");
+        let data_s = &data[..];
+        let res = parse_makefile(data_s);
+        match res {
+            Ok((_, o)) => {
+                assert_eq!(o.variables.len(), 3);
+                assert_eq!(o.rules.len(), 10);
+                assert!(o.rules[0].targets.contains(&"edit"));
+                assert_eq!(o.rules[0].prerequsities.len(), 8);
+                assert!(o.rules[0].prerequsities.contains(&"main.o"));
+                assert!(o.rules[0].prerequsities.contains(&"utils.o"));
+                assert!(o.rules[1].targets.contains(&"main.o"));
+                assert!(o.rules[9].targets.contains(&"clean"));
+            }
+            Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => {
+                println!("{}", convert_error(data_s, e));
+                panic!();
+            }
+            Err(nom::Err::Incomplete(_)) => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn test_parse_makefile_complex() {
+        let data = fs::read_to_string("./assets/02-complex.mk").expect("ohnoes");
+        let data_s = &data[..];
+        let res = parse_makefile(data_s);
+        match res {
+            Ok((_, o)) => {
+                assert_eq!(o.variables.len(), 23);
+                assert_eq!(o.rules.len(), 23);
+                assert!(o.rules[0].targets.contains(&".PHONY"));
+                assert_eq!(o.rules[0].prerequsities.len(), 1);
+                assert!(o.rules[0].prerequsities.contains(&"all"));
+                assert!(o.rules[22].targets.contains(&"tar.zoo"));
+            }
+            Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => {
+                println!("{}", convert_error(data_s, e));
+                panic!();
+            }
+            Err(nom::Err::Incomplete(_)) => unreachable!(),
+        }
+    }
+
 }

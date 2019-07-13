@@ -1,7 +1,7 @@
 use daggy::{Dag, NodeIndex};
 use std::collections::HashMap;
 
-use crate::types::{Makefile, Rule};
+use crate::types::Makefile;
 
 pub fn from_makefile<'a>(makefile: Makefile) -> Result<Dag<&str, u32, u32>, &'a str> {
     let mut res = Dag::new();
@@ -35,15 +35,21 @@ pub fn from_makefile<'a>(makefile: Makefile) -> Result<Dag<&str, u32, u32>, &'a 
     Ok(res)
 }
 
-#[test]
-fn test_from_makefile() {
-    let _d = from_makefile(Makefile {
-        variables: Vec::new(),
-        rules: vec![Rule {
-            targets: vec!["foo", "bar"],
-            prerequsities: vec!["baz", "quux"],
-            recipe: Vec::new(),
-        }],
-    })
-    .unwrap();
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::types::{Makefile, Rule};
+
+    #[test]
+    fn test_from_makefile() {
+        let _d = from_makefile(Makefile {
+            variables: Vec::new(),
+            rules: vec![Rule {
+                targets: vec!["foo", "bar"],
+                prerequsities: vec!["baz", "quux"],
+                recipe: Vec::new(),
+            }],
+        })
+        .unwrap();
+    }
 }
