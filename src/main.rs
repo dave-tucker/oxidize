@@ -2,7 +2,9 @@ use std::fs::File;
 use std::io::prelude::*;
 
 use clap::{App, Arg};
+use daggy::petgraph::dot::{Config, Dot};
 use nom::error::convert_error;
+use oxidize::graph;
 use oxidize::parser;
 
 fn main() -> std::io::Result<()> {
@@ -32,7 +34,8 @@ fn main() -> std::io::Result<()> {
         }
         Err(nom::Err::Incomplete(_)) => unreachable!(),
         Ok((_, o)) => {
-            println!("{:#?}", o);
+            let dag = graph::from_makefile(o).unwrap();
+            println!("{:?}", Dot::with_config(&dag, &[Config::EdgeNoLabel]));
             Ok(())
         }
     }

@@ -7,6 +7,19 @@ oxidize
 As the Makefile syntax isn't exactly well-defined (there is no grammar for it and one will never be developed) it may not be possible to support 100% of all the Makefiles out there.
 I hope that it should be able to cover 80% of the use cases.
 
+## Current Status
+
+This project is pre-alpha and under active development.
+
+`oxidize` can:
+
+- Read the two example Makefiles in the `assets` directory. These were taken from the GNU Make Manual.
+- The output of the `oxidize` can be piped to `dot` to display the DAG that was assembled from the Makefile
+
+`oxidize` cannot:
+- Read all Makefiles
+- Actually build anything!
+
 ## Why replace make?
 
 GNU Make is a tool which controls the generation of executables and other non-source files of a program from the program's source files.
