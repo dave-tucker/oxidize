@@ -1,6 +1,8 @@
 oxidize
 =======
 
+[![Build Status](https://dev.azure.com/dave-tucker/oxidize/_apis/build/status/dave-tucker.oxidize?branchName=master)](https://dev.azure.com/dave-tucker/oxidize/_build/latest?definitionId=1&branchName=master) [![codecov](https://codecov.io/gh/dave-tucker/oxidize/branch/master/graph/badge.svg)](https://codecov.io/gh/dave-tucker/oxidize)
+
 ## What is oxidize
 
 `oxidize` is designed to be a fast, flexible, drop-in replacement for GNU Make.

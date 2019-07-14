@@ -8,3 +8,7 @@ edition = "2018"
 nom = "5.0.0"
 daggy = "0.6.0"
 clap = "2.3.3"
+
+[badges]
+azure-devops = { project = "dave-tucker/oxidize", pipeline = "oxidize", build = "1" }
+codecov = { repository = "dave-tucker/oxidize", branch = "master", service = "github" }
