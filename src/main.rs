@@ -17,11 +17,12 @@ fn main() -> std::io::Result<()> {
                 .short("f")
                 .long("file")
                 .takes_value(true)
-                .help("A cool file"),
+                .default_value("Makefile")
+                .help("File to read"),
         )
         .get_matches();
 
-    let filename = matches.value_of("file").unwrap_or("Makefile");
+    let filename = matches.value_of("file").unwrap();
     let mut file = File::open(filename)?;
     let mut contents = String::new();
     file.read_to_string(&mut contents)?;
