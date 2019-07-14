@@ -47,17 +47,17 @@ fn parse_variable_name<'a>(i: &'a str) -> IResult<&'a str, &'a str, VerboseError
 
 // Parse Variable
 fn parse_variable<'a>(i: &'a str) -> IResult<&'a str, Variable, VerboseError<&'a str>> {
-    let (i, foo) = parse_variable_name(i)?;
+    let (i, name) = parse_variable_name(i)?;
     let (i, _) = space0(i)?;
-    let (i, bar) = parse_assignment_op(i)?;
+    let (i, operator) = parse_assignment_op(i)?;
     let (i, _) = space0(i)?;
 
     let mut parts: Vec<&'a str> = Vec::new();
-    let (i, baz) = not_line_ending(i)?;
-    parts.push(baz);
+    let (i, recipe) = not_line_ending(i)?;
+    parts.push(recipe);
 
     let mut i = i;
-    if baz.ends_with("\\") {
+    if recipe.ends_with('\\') {
         loop {
             //println!("{}", i);
             let (j, _) = line_ending(i)?;
@@ -67,7 +67,7 @@ fn parse_variable<'a>(i: &'a str) -> IResult<&'a str, Variable, VerboseError<&'a
             let (j, p) = not_line_ending(j)?;
             i = j;
             parts.push(p);
-            if !p.ends_with("\\") {
+            if !p.ends_with('\\') {
                 break;
             }
         }
@@ -76,8 +76,8 @@ fn parse_variable<'a>(i: &'a str) -> IResult<&'a str, Variable, VerboseError<&'a
     Ok((
         i,
         Variable {
-            name: foo,
-            assignment: bar,
+            name,
+            assignment: operator,
             value: parts,
         },
     ))
@@ -176,7 +176,7 @@ fn parse_rule<'a>(i: &'a str) -> IResult<&'a str, Rule, VerboseError<&'a str>> {
         Rule {
             targets: name,
             prerequsities: prereqs,
-            recipe: recipe,
+            recipe,
         },
     ))
 }
