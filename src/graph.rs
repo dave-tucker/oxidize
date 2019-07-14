@@ -42,14 +42,28 @@ mod test {
 
     #[test]
     fn test_from_makefile() {
-        let _d = from_makefile(Makefile {
+        let d = from_makefile(Makefile {
             variables: Vec::new(),
-            rules: vec![Rule {
-                targets: vec!["foo", "bar"],
-                prerequsities: vec!["baz", "quux"],
-                recipe: Vec::new(),
-            }],
+            rules: vec![
+                Rule {
+                    targets: vec!["foo", "bar"],
+                    prerequsities: vec!["baz", "quux"],
+                    recipe: Vec::new(),
+                },
+                Rule {
+                    targets: vec![".PHONY"],
+                    prerequsities: vec!["all"],
+                    recipe: Vec::new(),
+                },
+                Rule {
+                    targets: vec!["baz"],
+                    prerequsities: vec!["foobar"],
+                    recipe: Vec::new(),
+                },
+            ],
         })
         .unwrap();
+        assert_eq!(d.node_count(), 5);
+        assert_eq!(d.edge_count(), 5);
     }
 }
